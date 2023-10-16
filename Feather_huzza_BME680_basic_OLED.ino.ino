@@ -1,3 +1,5 @@
+//EEPROMSECTION added
+
 /**
  * Copyright (C) 2021 Bosch Sensortec GmbH
  *
@@ -18,9 +20,17 @@
  * which has been designed to work with Adafruit ESP8266 Board
  */
 
+////////////////////////////////////////
+/* Use the Espressif EEPROM library. Skip otherwise */
+#if defined(ARDUINO_ARCH_ESP32) || (ARDUINO_ARCH_ESP8266)
+#include <EEPROM.h>
+#define USE_EEPROM
+#endif
+/////////////////////////////////////////////
 #include <bsec2.h>
 
 /* Macros used */
+#define STATE_SAVE_PERIOD UINT32_C(360 * 60 * 1000) /* 360 minutes - 4 times a day */
 #define PANIC_LED   LED_BUILTIN
 #define ERROR_DUR   1000
 
@@ -35,6 +45,13 @@ void errLeds(void);
  * @param[in] bsec  : Bsec2 class object
  */
 void checkBsecStatus(Bsec2 bsec);
+//////////////////////////////////
+/**
+ * @brief : This function updates/saves BSEC state
+ * @param[in] bsec  : Bsec2 class object
+ */
+void updateBsecState(Bsec2 bsec);
+//////////////////////////////////
 
 /**
  * @brief : This function is called by the BSEC library when a new output is available
@@ -44,8 +61,28 @@ void checkBsecStatus(Bsec2 bsec);
  */
 void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bsec);
 
+
+////////////////////////////////////////////////////
+/**
+ * @brief : This function retrieves the existing state
+ * @param : Bsec2 class object
+ */
+bool loadState(Bsec2 bsec);
+
+/**
+ * @brief : This function writes the state into EEPROM
+ * @param : Bsec2 class object
+ */
+bool saveState(Bsec2 bsec);
+/////////////////////////////////////////////////////
+
 /* Create an object of the class Bsec2 */
 Bsec2 envSensor;
+///////////////////////////////
+#ifdef USE_EEPROM
+static uint8_t bsecState[BSEC_MAX_STATE_BLOB_SIZE];
+#endif
+//////////////////////////////
 
 //////////////////////////////////
 #include <SPI.h>
@@ -72,11 +109,15 @@ void setup(void)
 
     /* Initialize the communication interfaces */
     Serial.begin(115200);
+    /* Valid for boards with USB-COM. Wait until the port is open */
+    while(!Serial) delay(10);
+    #ifdef USE_EEPROM
+      EEPROM.begin(BSEC_MAX_STATE_BLOB_SIZE + 1);
+    #endif
     Wire.begin();
     pinMode(PANIC_LED, OUTPUT);
 
-    /* Valid for boards with USB-COM. Wait until the port is open */
-    while(!Serial) delay(10);
+
 
     /* Initialize the library and interfaces */
     if (!envSensor.begin(BME68X_I2C_ADDR_LOW, Wire))
@@ -99,7 +140,8 @@ void setup(void)
             + String(envSensor.version.major_bugfix) + "." \
             + String(envSensor.version.minor_bugfix));
     /////////////////////////////////
-    Serial.println("128x64 OLED FeatherWing test");
+  
+  Serial.println("128x64 OLED FeatherWing test");
   delay(250); // wait for the OLED to power up
   display.begin(0x3C, true); // Address 0x3C default
 
@@ -114,22 +156,9 @@ void setup(void)
   // Clear the buffer.
   display.clearDisplay();
   display.display();
-
   display.setRotation(1);
-  // Serial.println("Button test");
-
-  // pinMode(BUTTON_A, INPUT_PULLUP);
-  // pinMode(BUTTON_B, INPUT_PULLUP);
-  // pinMode(BUTTON_C, INPUT_PULLUP);
-
-  // text display tests
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
-  // display.setCursor(0,0);
-  // display.print("Connecting to SSID\n'adafruit':");
-  // display.print("connected!");
-  // display.println("IP: 10.0.1.23");
-  // display.println("Sending val #0");
   display.display(); // actually display all of the above
     ////////////////////////////////
 
@@ -159,6 +188,23 @@ void errLeds(void)
     }
 }
 
+/////////////////////////////////////
+void updateBsecState(Bsec2 bsec)
+{
+    static uint16_t stateUpdateCounter = 0;
+    bool update = false;
+
+    if (!stateUpdateCounter || (stateUpdateCounter * STATE_SAVE_PERIOD) < millis())
+    {
+        /* Update every STATE_SAVE_PERIOD minutes */
+        update = true;
+        stateUpdateCounter++;
+    }
+
+    if (update && !saveState(bsec))
+        checkBsecStatus(bsec);
+}
+/////////////////////////////////////
 void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bsec)
 {
     if (!outputs.nOutputs)
@@ -170,6 +216,7 @@ void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bse
     display.setCursor(0,0); 
     Serial.println("BSEC outputs:\n\ttimestamp = " + String((int) (outputs.output[0].time_stamp / INT64_C(1000000))));
     display.println("\ttimestamp = " + String((int) (outputs.output[0].time_stamp / INT64_C(1000000))));
+    digitalWrite(PANIC_LED, LOW);
     for (uint8_t i = 0; i < outputs.nOutputs; i++)
     {
         const bsecData output  = outputs.output[i];
@@ -210,6 +257,7 @@ void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bse
         }
     }
     display.display(); // actually display all of the above
+    digitalWrite(PANIC_LED, HIGH);
 }
 
 void checkBsecStatus(Bsec2 bsec)
@@ -234,3 +282,59 @@ void checkBsecStatus(Bsec2 bsec)
         Serial.println("BME68X warning code : " + String(bsec.sensor.status));
     }
 }
+
+///////////EEPROMSECTION//////////////////////////////////////////////////////////
+bool loadState(Bsec2 bsec)
+{
+#ifdef USE_EEPROM
+    
+
+    if (EEPROM.read(0) == BSEC_MAX_STATE_BLOB_SIZE)
+    {
+        /* Existing state in EEPROM */
+        Serial.println("Reading state from EEPROM");
+        Serial.print("State file: ");
+        for (uint8_t i = 0; i < BSEC_MAX_STATE_BLOB_SIZE; i++)
+        {
+            bsecState[i] = EEPROM.read(i + 1);
+            Serial.print(String(bsecState[i], HEX) + ", ");
+        }
+        Serial.println();
+
+        if (!bsec.setState(bsecState))
+            return false;
+    } else
+    {
+        /* Erase the EEPROM with zeroes */
+        Serial.println("Erasing EEPROM");
+
+        for (uint8_t i = 0; i <= BSEC_MAX_STATE_BLOB_SIZE; i++)
+            EEPROM.write(i, 0);
+
+        EEPROM.commit();
+    }
+#endif
+    return true;
+}
+
+bool saveState(Bsec2 bsec)
+{
+#ifdef USE_EEPROM
+    if (!bsec.getState(bsecState))
+        return false;
+
+    Serial.println("Writing state to EEPROM");
+    Serial.print("State file: ");
+
+    for (uint8_t i = 0; i < BSEC_MAX_STATE_BLOB_SIZE; i++)
+    {
+        EEPROM.write(i + 1, bsecState[i]);
+        Serial.print(String(bsecState[i], HEX) + ", ");
+    }
+    Serial.println();
+
+    EEPROM.write(0, BSEC_MAX_STATE_BLOB_SIZE);
+    EEPROM.commit();
+#endif
+    return true;
+}    
