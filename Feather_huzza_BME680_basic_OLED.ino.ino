@@ -99,6 +99,8 @@ void setup(void)
     /* Desired subscription list of BSEC2 outputs */
     bsecSensor sensorList[] = {
             BSEC_OUTPUT_IAQ,
+            BSEC_OUTPUT_CO2_EQUIVALENT,
+            BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,
             BSEC_OUTPUT_RAW_TEMPERATURE,
             BSEC_OUTPUT_RAW_PRESSURE,
             BSEC_OUTPUT_RAW_HUMIDITY,
@@ -228,10 +230,18 @@ void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bse
                 Serial.println("\tiaq accuracy = " + String((int) output.accuracy));
                 display.println("\tiaq accuracy = " + String((int) output.accuracy));
                 break;
+            case BSEC_OUTPUT_CO2_EQUIVALENT:
+                Serial.println("\tCO2equivl. = " + String(output.signal));
+                display.println("\tCO2equivl. = " + String(output.signal));
+                break;
+            case BSEC_OUTPUT_BREATH_VOC_EQUIVALENT:
+                Serial.println("\tBR_VOC_equivl. = " + String(output.signal));
+                display.println("\tBR_VOC_equi. = " + String(output.signal));
+                break;                
             case BSEC_OUTPUT_RAW_TEMPERATURE:
                 Serial.println("\ttemperature = " + String(output.signal));
                 display.println("\ttemperature = " + String(output.signal));
-                break;
+                break;                
             case BSEC_OUTPUT_RAW_PRESSURE:
                 Serial.println("\tpressure = " + String(output.signal));
                 //display.println("\tpressure = " + String(output.signal));
